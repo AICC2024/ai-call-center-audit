@@ -1,0 +1,11 @@
+Flask==2.3.3
+Flask-CORS==4.0.0
+Flask-Bcrypt==1.0.1
+Flask-JWT-Extended==4.5.3
+azure-cosmos==4.5.1
+numpy==1.26.4
+pandas==2.2.2
+python-dotenv==1.0.0
+pytz==2023.3
+gunicorn==21.2.0
+packaging==25.0
