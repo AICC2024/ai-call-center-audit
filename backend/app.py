@@ -92,37 +92,114 @@ def extract_message_text(messages):
     return " | ".join(parts)
 
 def extract_patient_name(summary, messages):
-    # Try to extract from summary
-    if summary:
-        patterns = [
-            r"associated with ([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
-            r"(?:her|his|their) (?:mother|father|husband|wife|son|daughter), ([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
-            r"regarding patient ([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
-            r"patient ([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
-            r"decedent ([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})"  # Added pattern to capture "decedent <Name>"
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, summary, re.IGNORECASE)
-            if match:
-                return match.group(1)
+    if not summary and not messages:
+        return ""
 
-    # Try to extract from messages
+    text_sources = [summary] if summary else []
     if messages:
         for m in messages:
-            role = m.get("role", "").lower()
-            content = m.get("content", "").lower()
-            if role == "user":
-                # Look for "patient name is"
-                match = re.search(r"patient name is ([a-z]+(?: [a-z]+)*)", content)
-                if match:
-                    # Capitalize each word
-                    name = " ".join(word.capitalize() for word in match.group(1).split())
-                    return name
-                # Look for "i'm with <name>"
-                match = re.search(r"i['’]?m with ([a-z]+(?: [a-z]+)*)", content)
-                if match:
-                    name = " ".join(word.capitalize() for word in match.group(1).split())
-                    return name
+            if m.get("role") == "user":
+                text_sources.append(m.get("content", ""))
+
+    text = " ".join(text_sources)
+    text = re.sub(r"’s\b|\'s\b", "", text)  # remove possessive
+    text = re.sub(r"[^A-Za-z0-9\s,.]", " ", text)  # remove noise
+
+    # Common relationship and context cues
+    relationship_terms = [
+        "father", "mother", "dad", "mom", "husband", "wife", "son", "daughter",
+        "grandmother", "grandfather", "brother", "sister", "cousin", "uncle", "aunt"
+    ]
+
+    skip_words = {"pain", "pills", "medication", "refill", "results", "test", "issue", "concern"}
+
+    patterns = [
+        # Handles cases like "for her mother-in-law, Roma Theriot" or "for her mother in law Roma Theriot"
+        r"(?:for|about|regarding|called about|called regarding)\s+(?:her|his|their)?\s*(?:mother|father)(?:[-\s]?in[-\s]?law)?[, ]+\s*([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+
+        r"(?:regarding|in regards to)\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+        # 1. Relationship pattern with trailing comma and "passed away" context
+        r"(?:about|regarding|for|called about|called regarding|her|his|their)\s+(?:his|her|their)?\s*(?:"
+        + "|".join(relationship_terms) +
+        r"),?\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})(?:, passed away)?",
+
+        # 2. Relationship pattern with 'about' and trailing comma
+        r"about\s+(?:my|his|her|their)?\s*(?:"
+        + "|".join(relationship_terms) +
+        r"),?\s*([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+
+        # 3. Title + name pattern ("Miss Mavis Hilburn")
+        r"(?:Miss|Mrs|Ms|Mr)\.?\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,2})",
+
+        # 4. Simple 'patient' + proper name (not lowercase words)
+        r"patient\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+
+        # 5. 'associated with <Name>'
+        r"associated with ([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+
+        # 6. 'decedent <Name>'
+        r"decedent\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+
+        # 7. 'refill on Miss <Name>' or similar with possessive or trailing words
+        r"refill on (?:Miss|Mrs|Mr|Ms)?\.?\s*([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})(?:’s|\'s)?(?: medication)?",
+
+        # 7.5 Handles "reported that resident Gerald Gutros" or similar
+        r"reported that (?:the )?(?:resident|patient)\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+
+        # 8. Handles "requested ... for [Name]" (covers cases like Cheryl requesting for Sylvia Blackwell)
+        r"requested (?:an on-call nurse|medication|a refill|assistance)? for\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})(?=[\s,.]|$)",
+
+        # 9. Handles "mother-in-law, [Name]" or "father-in-law, [Name]" (handles cases like Mary Theriot requesting for Roma Theriot)
+        r"(?:mother|father|in-law|mother-in-law|father-in-law),\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+
+        # 10. Handles "regarding patient [Name]" or "regarding [Name]" (covers Dawn Gulledge, Regina Calhoun, and similar)
+        r"(?:regarding|in regards to)\s+(?:patient\s+)?([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})(?=[\s,.]|$)",
+
+        # 11. Handles "for [Name]" at sentence end when request verbs omitted (backup match for simple phrasing)
+        r"\bfor\s+([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})(?=[\s,.]|$)",
+
+        # 12. Handles conversation cases where AI asks for the patient name and Caller provides it
+        r"(?:patient'?s full name[, ]?(?:please)?|patient name is)\s*[:\-]?\s*([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})",
+    ]
+
+    for idx, pattern in enumerate(patterns, 1):
+        match = re.search(pattern, text)
+        if match:
+            name = match.group(1).strip(".,; ")
+            # Filter out lowercase words pretending to be names
+            if name.lower() in skip_words:
+                continue
+            # Exclude single words that are not likely proper nouns
+            if len(name.split()) == 1 and name[0].islower():
+                continue
+            return name
+
+    # Fallback: Check conversation messages if no name found in summary
+    if not summary and messages:
+        for msg in messages:
+            content = msg.get("content", "")
+            if re.search(r"(patient|name|full name)", content, re.IGNORECASE):
+                name_match = re.search(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+){0,3})\b", content)
+                if name_match:
+                    name = name_match.group(1).strip(".,; ")
+                    if name.lower() not in skip_words:
+                        return name
+
+    # Secondary fallback: handle cases where caller spells name letter-by-letter
+    if not summary and messages:
+        for msg in messages:
+            content = msg.get("content", "")
+            # Detect spelled names (e.g., "k e n d r a h a r v e y")
+            spelled_match = re.search(r"Caller:\s*([a-z](?:\s+[a-z]){2,})", content)
+            if spelled_match:
+                spelled_text = spelled_match.group(1)
+                # Collapse spaces and reconstruct name
+                cleaned = "".join(spelled_text.split())
+                # Capitalize if it looks like a real name
+                if cleaned.isalpha() and len(cleaned) > 3:
+                    name_guess = cleaned.capitalize()
+                    return name_guess
+
     return ""
 
 @app.route("/audit-log", methods=["GET"])
