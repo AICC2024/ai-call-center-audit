@@ -35,4 +35,4 @@ jobs:
           app-name: ai-call-center-audit-log
           slot-name: Production
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
-          package: ./app.zip
+          package: ./backend
