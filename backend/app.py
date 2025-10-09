@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, Response, redirect
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
@@ -11,6 +11,9 @@ from datetime import datetime
 import pytz
 import json
 import re
+import requests
+import jwt
+import jwt as pyjwt
 
 load_dotenv()
 
@@ -64,6 +67,10 @@ client = CosmosClient(COSMOS_URI, credential=COSMOS_KEY)
 database = client.get_database_client(DATABASE_NAME)
 call_summary_container = database.get_container_client(CALL_SUMMARY)
 nurse_handoff_container = database.get_container_client(NURSE_HANDOFF)
+
+# Twilio credentials from environment variables
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 
 def convert_to_timezone(dt_str, tz):
     if not dt_str:
@@ -205,8 +212,8 @@ def extract_patient_name(summary, messages):
 @app.route("/audit-log", methods=["GET"])
 @jwt_required()
 def audit_log():
-    start_date = request.args.get("start")
-    end_date = request.args.get("end")
+    start_date = request.args.get("start_date") or request.args.get("start")
+    end_date = request.args.get("end_date") or request.args.get("end")
     if not start_date or not end_date:
         return jsonify({"msg": "start and end date parameters are required"}), 400
     user_tz_str = request.args.get("tz", "UTC")
@@ -350,6 +357,55 @@ def export_audit_log():
     df.to_csv(output, index=False)
     output.seek(0)
     return send_file(output, mimetype="text/csv", as_attachment=True, download_name="audit_log.csv")
+
+
+
+@app.route("/recording/<filename>", methods=["GET"])
+def get_recording(filename):
+    """
+    Redirects the user to the Azure Blob Storage SAS URL for playback,
+    with retry and timeout handling to avoid request failures.
+    """
+    import time
+    import requests
+    from flask import redirect
+
+    try:
+        base_url = os.getenv("AZURE_BLOB_BASE_URL")
+        sas_token = os.getenv("AZURE_SAS_TOKEN")
+
+        if not base_url or not sas_token:
+            return jsonify({"msg": "Azure storage not configured"}), 500
+
+        filename = filename.replace(".mp3", "") + ".mp3"
+        file_url = f"{base_url}/{filename}{sas_token}"
+
+        # Retry logic for transient network issues
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                check = requests.head(file_url, timeout=10)
+                if check.status_code == 200:
+                    print(f"✅ Redirecting to Azure Blob: {file_url}")
+                    return redirect(file_url, code=302)
+                elif check.status_code == 404:
+                    print(f"❌ Recording {filename} not found in Azure Blob Storage.")
+                    return jsonify({"msg": f"Recording {filename} not found"}), 404
+                else:
+                    print(f"⚠️ Unexpected status {check.status_code} on attempt {attempt+1}")
+            except requests.Timeout:
+                print(f"⏳ Timeout on attempt {attempt+1}, retrying...")
+                time.sleep(2)
+            except requests.RequestException as e:
+                print(f"⚠️ Network error on attempt {attempt+1}: {e}")
+                time.sleep(2)
+
+        print(f"❌ Failed to retrieve recording {filename} after {max_retries} attempts.")
+        return jsonify({"msg": f"Failed to reach Azure Blob after {max_retries} retries"}), 504
+
+    except Exception as e:
+        print("❌ Error serving recording:", e)
+        return jsonify({"msg": "Error retrieving recording", "error": str(e)}), 500
 
 @app.route("/")
 def index():

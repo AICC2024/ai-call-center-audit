@@ -1,7 +1,10 @@
 import React, { useState } from "react";
 import axios from "axios";
 
-const API_BASE = "https://ai-call-center-audit-log-ckd2achqdfahchan.centralus-01.azurewebsites.net";
+// Dynamically select API base URL: local for development, Azure for production
+const API_BASE =
+  process.env.REACT_APP_API_BASE || "http://127.0.0.1:5001";
+console.log("Using API base URL:", API_BASE);
 
 function App() {
   const [start, setStart] = useState("");
@@ -221,6 +224,7 @@ export default App;
 function CardWithCollapsibleMessages({ row }) {
   const [expanded, setExpanded] = useState(false);
   const [metadataExpanded, setMetadataExpanded] = useState(false);
+  const [audioSrc, setAudioSrc] = useState("");
   const isLong = row.messages && row.messages.length > 200;
 
   // Render patient name: prefer row.patient_name, then row.patient_name_encoded, else blank
@@ -358,7 +362,31 @@ function CardWithCollapsibleMessages({ row }) {
         </div>
       </div>
       <div style={{ marginTop: 12, fontSize: 12, color: "#555" }}>
-        <div>Recording Filename: {row.recording_filename}</div>
+        {row.recording_filename ? (
+          <>
+            <div><strong>Recording:</strong></div>
+            <audio
+              controls
+              preload="none"
+              style={{ width: "100%", marginTop: 4 }}
+              src={audioSrc}
+              onPlay={(e) => {
+                if (!audioSrc) {
+                  const newSrc = `${API_BASE}/recording/${row.recording_filename}?token=${localStorage.getItem("token")}`;
+                  setAudioSrc(newSrc);
+                  // small delay to ensure source attaches, then play again automatically
+                  setTimeout(() => {
+                    e.target.play().catch(() => {});
+                  }, 500);
+                }
+              }}
+            >
+              Your browser does not support the audio element.
+            </audio>
+          </>
+        ) : (
+          <div>No Recording Available</div>
+        )}
       </div>
     </div>
   );
