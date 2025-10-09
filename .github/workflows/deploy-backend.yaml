@@ -24,15 +24,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Zip backend for deploy
-        run: |
-          cd backend
-          zip -r ../app.zip .
-
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: ai-call-center-audit-log
           slot-name: Production
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
-          package: ./backend
+          package: ${{ github.workspace }}/backend
