@@ -9,4 +9,3 @@ python-dotenv==1.0.0
 pytz==2023.3
 gunicorn==21.2.0
 packaging==25.0
-flask-cors
