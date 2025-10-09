@@ -1,4 +1,16 @@
+# Python virtual environment
 backend/venv/
+
+# Node modules
 frontend/node_modules/
-frontend/build/backend/.env
-backend/.envbackend/.env
+
+# Build files
+frontend/build/
+
+# Environment files
+backend/.env
+frontend/.env
+
+# Logs and cache
+__pycache__/
+*.log
