@@ -3,7 +3,7 @@ import axios from "axios";
 
 // Dynamically select API base URL: local for development, Azure for production
 const API_BASE =
-  process.env.REACT_APP_API_BASE || "http://127.0.0.1:5001";
+  process.env.REACT_APP_API_BASE || "https://ai-call-center-audit-log-ckd2achqdfahchan.centralus-01.azurewebsites.net";
 console.log("Using API base URL:", API_BASE);
 
 function App() {
